@@ -1,0 +1,19 @@
+# PR-Agent settings. Model + review focus live here so the workflow stays simple.
+
+[config]
+model = "gemini/gemini-3.8-flash"
+fallback_models = ["gemini/gemini-3.8-flash"]
+
+[pr_reviewer]
+extra_instructions = """
+This code computes prices and labels for retail weighing scales.
+Pay special attention to:
+- money math (floating point vs Decimal, rounding to cents)
+- weight units and tare handling
+- input validation (zero/negative weights, missing PLUs)
+- hardcoded secrets or credentials
+"""
+
+[pr_code_suggestions]
+num_code_suggestions_per_chunk = 6
+suggestions_score_threshold = 6
