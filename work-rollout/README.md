@@ -1,6 +1,6 @@
 # AI PR Review rollout (PR-Agent + Claude)
 
-One central setup, reused by every repo. Pilot repos: **enterprise**, **gtscaleui**, **scaleservice**.
+One central setup, reused by every repo. Pilot repos: **a**, **b**, **c**.
 
 ## How it fits together
 
@@ -8,7 +8,7 @@ One central setup, reused by every repo. Pilot repos: **enterprise**, **gtscaleu
 central repo: ai-code-review
   .github/workflows/pr-review.yml   <- model, cost limits, shared review rules (edit once)
 
-each product repo (enterprise, gtscaleui, scaleservice)
+each product repo (a, b, c)
   .github/workflows/ci.yml          <- existing build/tests + ~15 lines that call the shared workflow
   .github/ai-review/REVIEW_GUIDE.md <- what this repo is, legacy areas, what to watch
 ```
