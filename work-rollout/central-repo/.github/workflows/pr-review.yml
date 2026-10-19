@@ -1,0 +1,122 @@
+# Shared AI code review workflow (PR-Agent + Claude).
+# Lives in ONE central repo. Every product repo calls it with ~10 lines,
+# so model, cost limits and shared review rules are changed in one place.
+#
+# Each calling repo adds its own context in .github/ai-review/REVIEW_GUIDE.md.
+
+name: AI PR Review (shared)
+
+on:
+  workflow_call:
+    inputs:
+      ci_artifact:
+        description: "Name of an uploaded artifact with build/test output (optional)"
+        type: string
+        default: "ci-summary"
+    secrets:
+      ANTHROPIC_KEY:
+        required: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      # Repo-specific guide, read from the calling repo's DEFAULT branch
+      # (not the PR) so a PR can't rewrite the reviewer's instructions.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: .github/ai-review
+          sparse-checkout-cone-mode: false
+
+      - name: Build review instructions (shared rules + repo guide)
+        run: |
+          cat > /tmp/instructions.md <<'SHARED_EOF'
+          # Shared review rules (all repos)
+
+          Not every PR has a bug. "No major issues found" is a valid result. Do not invent problems.
+
+          ## Check on every PR
+          1. Does the logic match the intent? Compare the code to the PR title/description.
+             Flag mismatches, missed cases, inverted or incomplete conditions.
+          2. Crashes and undefined behavior: null/dangling pointers, use-after-free, double delete,
+             unchecked return values, out-of-bounds/off-by-one, divide by zero, overflow,
+             uninitialized variables, swallowed exceptions or ignored error codes.
+          3. Resource leaks: memory, file handles, sockets, locks.
+
+          ## Classify every finding
+          - Bug / Must fix: incorrect behavior, crash, UB, leak, security issue, wrong weight/price/rounding.
+          - Risk: likely problem under realistic conditions.
+          - Suggestion (legacy modernization): optional style/modernization only. Never call these bugs.
+
+          ## Legacy code ground rules
+          - Comment only on lines changed in this PR and directly affected code.
+          - Match the file's existing style. Do not ask for refactors of untouched code,
+            C++ standard bumps, new libraries, or large rewrites.
+          - Skip formatting-only nits. Prefer small, low-risk suggestions.
+          SHARED_EOF
+          if [ -f .github/ai-review/REVIEW_GUIDE.md ]; then
+            printf "\n\n# Repo-specific guide\n\n" >> /tmp/instructions.md
+            cat .github/ai-review/REVIEW_GUIDE.md >> /tmp/instructions.md
+          fi
+          {
+            echo "PR_REVIEWER__EXTRA_INSTRUCTIONS<<INSTR_EOF"
+            cat /tmp/instructions.md
+            echo "INSTR_EOF"
+            echo "PR_CODE_SUGGESTIONS__EXTRA_INSTRUCTIONS<<INSTR_EOF"
+            cat /tmp/instructions.md
+            echo "INSTR_EOF"
+          } >> "$GITHUB_ENV"
+
+      - name: Get build/test output
+        if: github.event_name == 'pull_request' && inputs.ci_artifact != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.ci_artifact }}
+          path: reports
+
+      - name: PR-Agent
+        continue-on-error: true            # AI review never fails the PR
+        # Pinned release (not @main) for supply-chain safety. Bump deliberately.
+        uses: docker://pragent/pr-agent:0.41.0-github_action
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC.KEY: ${{ secrets.ANTHROPIC_KEY }}
+
+          # --- Models: Sonnet for review/suggestions, cheap Haiku for describe/ask ---
+          config.model: "anthropic/claude-sonnet-5-5"
+          config.fallback_models: '["anthropic/claude-haiku-5-5"]'
+          config.model_weak: "anthropic/claude-haiku-5-5"
+
+          # --- Cost controls ---
+          config.max_model_tokens: "32000"        # cap prompt size per call
+          config.large_patch_policy: "clip"
+          config.output_run_details: "true"       # shows model/run info while we pilot
+          pr_reviewer.num_max_findings: "6"
+          pr_code_suggestions.num_code_suggestions_per_chunk: "4"
+          pr_code_suggestions.suggestions_score_threshold: "6"
+          # Never send these to the model
+          ignore.glob: '["third_party/**","vendor/**","external/**","node_modules/**","packages/**","build/**","out/**","bin/**","obj/**","dist/**","*.generated.*","*.designer.cs","*.min.js","*.lock","package-lock.json","*.vcxproj","*.vcxproj.filters","*.csproj","*.sln","*.png","*.jpg","*.bmp","*.ico","*.bin","*.hex","*.dll","*.exe"]'
+
+          # --- Review behavior ---
+          pr_reviewer.require_tests_review: "true"
+          pr_reviewer.require_security_review: "true"
+          pr_description.keep_original_user_title: "true"
+          pr_description.add_original_user_description: "true"
+
+          # --- When it runs automatically: open / reopen / ready only, NOT every push ---
+          github_action_config.auto_review: "true"
+          github_action_config.auto_describe: "true"
+          github_action_config.auto_improve: "true"
+          github_action_config.pr_actions: '["opened", "reopened", "ready_for_review"]'
+        with:
+          artifact_path: reports/ci_summary.txt
+          artifact_instructions: >-
+            Build and unit-test output from this PR's CI run. If the build or tests
+            failed, point to the most likely cause in the changed code.

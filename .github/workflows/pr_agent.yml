@@ -1,29 +1,105 @@
-name: AI Code Review (PR-Agent)
+# Unit tests, then AI review. The AI review never fails the PR.
+
+name: CI + AI Review
 
 on:
   pull_request:
     types: [opened, reopened, ready_for_review, synchronize]
-  issue_comment:
+  issue_comment:            # /review, /improve, /describe, /ask in a PR comment
+
+# Cancel the older run when new commits land on the same PR
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
 
 jobs:
-  pr_agent_job:
-    # Skip bot-triggered events so the reviewer never replies to itself
-    if: ${{ github.event.sender.type != 'Bot' }}
+  test:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Unit tests
+        run: |
+          set -o pipefail
+          pip install -q pytest
+          mkdir -p reports
+          python -m pytest -q 2>&1 | tee reports/tests.log
+      - name: Save test output for the AI reviewer
+        if: always()
+        run: tail -n 400 reports/tests.log > reports/ci_summary.txt 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-summary
+          path: reports/ci_summary.txt
+          retention-days: 3
+
+  ai_review:
+    needs: test
+    # Runs after tests even if they fail. Skips bots, drafts, plain pushes to an
+    # open PR (comment /review to re-run), and comments that aren't commands.
+    if: >-
+      always() &&
+      github.event.sender.type != 'Bot' &&
+      (
+        (github.event_name == 'pull_request' &&
+         github.event.action != 'synchronize' &&
+         !github.event.pull_request.draft)
+        ||
+        (github.event_name == 'issue_comment' &&
+         github.event.issue.pull_request &&
+         startsWith(github.event.comment.body, '/'))
+      )
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 10
     permissions:
       contents: read
       issues: write
       pull-requests: write
-    name: Review PRs and answer /commands
     steps:
-      - name: PR Agent action step
-        id: pragent
-        uses: the-pr-agent/pr-agent@main
+      # Review guide comes from the default branch, not the PR
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: .github/ai-review
+          sparse-checkout-cone-mode: false
+
+      - name: Load review guide
+        run: |
+          {
+            echo "PR_REVIEWER__EXTRA_INSTRUCTIONS<<GUIDE_EOF"
+            cat .github/ai-review/REVIEW_GUIDE.md
+            echo "GUIDE_EOF"
+            echo "PR_CODE_SUGGESTIONS__EXTRA_INSTRUCTIONS<<GUIDE_EOF"
+            cat .github/ai-review/REVIEW_GUIDE.md
+            echo "GUIDE_EOF"
+          } >> "$GITHUB_ENV"
+
+      - name: Get test output
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-summary
+          path: reports
+
+      - name: PR-Agent
+        # Pinned release, not @main
+        uses: docker://pragent/pr-agent:0.41.0-github_action
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Free-tier Gemini key from https://aistudio.google.com/ (stored as a repo secret)
           GOOGLE_AI_STUDIO.GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          # Run all three tools automatically when a PR is opened
+          # ANTHROPIC.KEY: ${{ secrets.ANTHROPIC_KEY }}   # when switching to Claude
           github_action_config.auto_review: "true"
           github_action_config.auto_describe: "true"
           github_action_config.auto_improve: "true"
+          github_action_config.pr_actions: '["opened", "reopened", "ready_for_review"]'
+        with:
+          artifact_path: reports/ci_summary.txt
+          artifact_instructions: >-
+            Unit-test output from this PR's CI run. If tests failed, point to the
+            most likely cause in the changed code.

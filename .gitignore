@@ -1,3 +1,5 @@
 demo_pr/
 setup.sh
 __pycache__/
+.pytest_cache/
+.DS_Store

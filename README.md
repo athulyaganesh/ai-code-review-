@@ -1,42 +1,65 @@
-# AI Code Review Demo (PR-Agent + free Gemini)
+# AI Code Review Demo (PR-Agent)
 
-Every pull request in this repo gets an automatic AI review: a PR description,
-a review with findings, and line-level code suggestions. Cost: $0 (GitHub
-Actions free minutes + Gemini API free tier).
+Every pull request gets an automatic AI review after the unit tests run:
+a PR summary, a review with findings, and line-level code suggestions.
+It is advisory only: it never blocks a merge, and a human still approves.
 
-## What happens on a PR
+## How it works
 
-- **Auto on open:** `/describe` (writes the PR summary), `/review` (bugs,
-  security, effort estimate), `/improve` (inline code suggestions).
-- **On demand:** comment on the PR with any of:
-  - `/ask how does tare get validated?` – ask questions about the change
-  - `/review` – re-run the review after new commits
-  - `/improve` – fresh code suggestions
-  - `/help` – list all commands
+1. A PR is opened (or marked ready for review).
+2. Unit tests run.
+3. The AI review job runs after them, even if they failed. It reads:
+   - the review guide `.github/ai-review/REVIEW_GUIDE.md` (from `main`, so a PR can't change it)
+   - the PR diff
+   - the last part of the test output
+4. It posts three comments: **/describe** (summary), **/review** (findings), **/improve** (suggestions).
 
-## Setup (one time)
+The guide tells it to check whether the logic matches what the PR says it does,
+look for crashes, null/None errors and leaks, label findings as Bug / Risk /
+Suggestion, and accept "no major issues" as a valid answer.
 
-1. Get a free API key at <https://aistudio.google.com/> → **Get API key**.
-2. Repo **Settings → Secrets and variables → Actions → New repository secret**
-   - Name: `GEMINI_API_KEY`, Value: your key
-3. Merge `.github/workflows/pr_agent.yml` and `.pr_agent.toml` to `main`.
-4. Open any PR. The `github-actions` bot comments within ~1–2 minutes.
+## Commands (comment on a PR)
 
-To change the model or review focus, edit `.pr_agent.toml`.
+| Command | What it does |
+|---|---|
+| `/review` | Re-run the review (e.g. after new commits) |
+| `/improve` | Fresh code suggestions |
+| `/describe` | Regenerate the PR summary |
+| `/ask <question>` | Ask about the change |
+
+## Cost controls
+
+- No re-review on every push: runs on open / reopen / ready. Comment `/review` to re-run.
+- Skips draft PRs and bot events; cancels stale runs when new commits land.
+- Cheaper model for descriptions and `/ask` (Haiku when on Claude).
+- Each call capped at 32K input tokens; oversized diffs are clipped.
+- `[ignore]` keeps vendored, generated and binary files out of the prompt.
+- At most 6 findings; low-value suggestions hidden.
+
+Small, focused PRs get better reviews and cost less. Large PRs get clipped and reviewed worse.
+
+## Setup
+
+1. Add a repo secret: **Settings -> Secrets and variables -> Actions**.
+   - Demo: `GEMINI_API_KEY` from <https://aistudio.google.com/>
+   - Claude: `ANTHROPIC_KEY` from the Claude Console, then switch the model lines in `.pr_agent.toml`
+     and the key line in the workflow.
+2. Open a PR.
 
 ## Files
 
-- `.github/workflows/pr_agent.yml` – the GitHub Action
-- `.pr_agent.toml` – model choice and domain-specific review instructions
-- `scale/pricing.py` – sample deli-scale pricing code
-- `tests/` – pytest tests
+- `.github/workflows/pr_agent.yml` - tests, then AI review
+- `.github/ai-review/REVIEW_GUIDE.md` - what the reviewer should focus on
+- `.pr_agent.toml` - model and cost settings
+- `scale/`, `tests/` - sample deli-scale pricing code and tests
+- `work-rollout/` - templates for rolling this out across several work repos
 
-## Notes for a work rollout
+## Data & security
 
-- Gemini's **free tier may use submitted data to improve Google's models**.
-  Fine for this demo; for proprietary code use a paid key with no-training
-  terms, an enterprise endpoint (Azure OpenAI, Bedrock, Vertex), or a
-  self-hosted model on a self-hosted runner.
-- PR-Agent is open source (Apache-2.0) and runs entirely inside your own
-  GitHub Actions; code goes only to the LLM provider you configure.
-- Works the same on GitLab (CI job or webhook) and Bitbucket.
+- PR-Agent is open source (**MIT license**) and runs inside our own GitHub Actions.
+  No Qodo service is in the loop; code goes only to the model provider configured.
+- Gemini's free tier may use submitted data to improve Google's models: fine for this demo only.
+  For proprietary code use the Claude API: inputs/outputs aren't used for training by default
+  and are deleted within 30 days (zero-data-retention available on request).
+- The action is pinned to a fixed PR-Agent release, not `@main`.
+- The job has read access to code and can only post PR comments.

@@ -1,0 +1,68 @@
+# EXAMPLE for each product repo (enterprise, gtscaleui, scaleservice, ...).
+# Keep your existing build/test job; add the three marked parts:
+#   (1) issue_comment trigger + concurrency
+#   (2) upload of build/test output
+#   (3) the ai_review job that calls the shared workflow
+
+name: CI
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+  issue_comment:                       # (1) lets people type /review, /improve, /ask
+
+# (1) Cancel the older run when new commits land on the same PR
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  build_and_test:                      # <- your existing job (keep its id or update `needs` below)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest             # or your windows / self-hosted runner
+    steps:
+      - uses: actions/checkout@v4
+      # ---- your real build + unit test steps; tee output into reports/ ----
+      - name: Build and test
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p reports
+          ./build.sh 2>&1 | tee reports/build.log
+          ./run_tests.sh 2>&1 | tee reports/tests.log
+      # ---------------------------------------------------------------------
+
+      # (2) Hand the last 400 lines of build/test output to the reviewer
+      - name: Save CI output for AI review
+        if: always()
+        shell: bash
+        run: cat reports/*.log 2>/dev/null | tail -n 400 > reports/ci_summary.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-summary
+          path: reports/ci_summary.txt
+          retention-days: 3
+
+  # (3) AI review: runs after build/tests (even if they fail), never blocks the PR.
+  ai_review:
+    needs: build_and_test
+    if: >-
+      always() &&
+      github.event.sender.type != 'Bot' &&
+      (
+        (github.event_name == 'pull_request' &&
+         github.event.action != 'synchronize' &&
+         !github.event.pull_request.draft)
+        ||
+        (github.event_name == 'issue_comment' &&
+         github.event.issue.pull_request &&
+         startsWith(github.event.comment.body, '/'))
+      )
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    uses: YOUR-ORG/ai-code-review/.github/workflows/pr-review.yml@v1
+    secrets:
+      ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_KEY }}
