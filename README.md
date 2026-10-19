@@ -63,3 +63,23 @@ Small, focused PRs get better reviews and cost less. Large PRs get clipped and r
   and are deleted within 30 days (zero-data-retention available on request).
 - The action is pinned to a fixed PR-Agent release, not `@main`.
 - The job has read access to code and can only post PR comments.
+
+## What this demonstrates
+
+- **AI code review in CI.** Every pull request gets an automatic first-pass review
+  (summary, findings, line-level suggestions) using open-source PR-Agent and an LLM.
+- **Pipeline integration.** Unit tests run first; the reviewer reads the test output and
+  points to the likely cause of failures. It is advisory and never blocks a merge.
+- **Domain-tuned review.** A review guide steers the model toward what matters here:
+  whether the logic matches the PR's stated intent, crashes and None errors, weight-unit
+  and money-rounding mistakes. It labels findings Bug / Risk / Suggestion and treats
+  "no issues" as a valid result.
+- **Cost control by design.** Event filtering (no re-review on every push, no drafts or
+  bots), a cheaper model for summaries, token caps, ignore paths and finding limits.
+- **Security hardening.** Pinned action version, least-privilege permissions, secrets in
+  GitHub Actions, and review rules read from `main` so a PR can't rewrite them.
+- **Evaluation.** Tested against PRs with planted bugs (wrong unit conversion, inverted
+  checks, off-by-one, hardcoded credentials, float money math) to measure what the
+  reviewer catches and misses.
+- **Portability.** Model and git host are swappable (Claude, Gemini, Bedrock/Azure;
+  GitHub, GitLab, Azure DevOps), and a central reusable workflow serves many repos.
