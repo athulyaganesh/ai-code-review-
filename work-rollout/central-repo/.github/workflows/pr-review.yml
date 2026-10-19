@@ -96,6 +96,7 @@ jobs:
 
           # --- Cost controls ---
           config.max_model_tokens: "32000"        # cap prompt size per call
+          config.custom_model_max_tokens: "128000" # needed if the pinned release does not know the model name
           config.large_patch_policy: "clip"
           config.output_run_details: "true"       # shows model/run info while we pilot
           pr_reviewer.num_max_findings: "6"

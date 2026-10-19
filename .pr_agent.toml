@@ -12,6 +12,9 @@ model_weak = "gemini/gemini-3.8-flash"
 
 # Cost controls
 max_model_tokens = 32000        # cap prompt size per call
+# Context size of the model. Required when the pinned PR-Agent release does not
+# know the model name yet; the 32K cap above still limits what is sent.
+custom_model_max_tokens = 128000
 large_patch_policy = "clip"     # oversized diffs are clipped, not sent whole
 output_run_details = true       # show which model ran (useful while piloting)
 
