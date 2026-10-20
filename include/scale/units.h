@@ -20,6 +20,7 @@
 /* Current API (2019+) */
 long gramsToMilliLb(long grams);
 long milliLbToGrams(long milliLb);
+long ozToMilliLb(long oz);
 
 /* Legacy API (pre-2019), kept for old firmware. */
 int  ConvertWeight(int value, int fromUnit, int toUnit);
