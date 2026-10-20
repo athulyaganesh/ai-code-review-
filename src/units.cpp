@@ -63,9 +63,16 @@ char* UnitName(int unit)
     case UNIT_LB: strcpy(name, "LB"); break;
     case UNIT_KG: strcpy(name, "KG"); break;
     case UNIT_OZ: strcpy(name, "OZ"); break;
+    case UNIT_GR: strcpy(name, "GRAMS (G)"); break;
     default:      strcpy(name, "??"); break;
     }
     return name;
+}
+
+/* Added: oz support for the new deli labels */
+long ozToMilliLb(long oz)
+{
+    return oz * MILLI_LB_PER_LB / OZ_PER_LB;
 }
 
 /* Old rounding helper, replaced by integer math in 2019. Nothing calls it. */

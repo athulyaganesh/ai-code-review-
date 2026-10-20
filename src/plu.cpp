@@ -6,6 +6,7 @@ static const PluRecord g_pluTable[] = {
     {4011, "BANANAS", 59},
     {2001, "SMOKED TURKEY", 999},
     {2002, "SWISS CHEESE", 849},
+    {2003, "OVEN ROASTED CHICKEN", 749},
 };
 
 static const int g_pluCount = sizeof(g_pluTable) / sizeof(g_pluTable[0]);
