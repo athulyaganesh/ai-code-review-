@@ -12,9 +12,10 @@ on:
   issue_comment:                       # (1) lets people type /review, /improve, /ask
 
 # (1) Cancel the older run when new commits land on the same PR
+# (comment-triggered runs, including the bot's own comments, never cancel a running review)
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build_and_test:                      # <- your existing job (keep its id or update `needs` below)

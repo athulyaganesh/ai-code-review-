@@ -17,7 +17,7 @@ large_patch_policy = "clip"       # oversized diffs are clipped, not sent whole
 output_run_details = true
 
 [pr_reviewer]
-num_max_findings = 6
+num_max_findings = 8
 require_tests_review = true
 require_security_review = true
 

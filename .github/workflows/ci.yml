@@ -8,10 +8,12 @@ on:
     types: [opened, reopened, ready_for_review, synchronize]
   issue_comment:            # /review, /improve, /describe, /ask in a PR comment
 
-# Cancel the older run when new commits land on the same PR
+# Cancel the older run only when new commits land on the same PR.
+# Comment-triggered runs (including the bot's own review comments) get their own
+# group and never cancel an AI review that is still running.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build_and_test:
