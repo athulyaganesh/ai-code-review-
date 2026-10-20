@@ -1,0 +1,10 @@
+# Matches the existing style: 4-space indent, function braces on their own line.
+# CI only checks lines changed in a PR, so legacy files are never mass-reformatted.
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 100
+BreakBeforeBraces: Linux
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+PointerAlignment: Left
+SortIncludes: Never

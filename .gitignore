@@ -1,4 +1,6 @@
+build/
 demo_pr/
+reports/
 setup.sh
 __pycache__/
 .pytest_cache/

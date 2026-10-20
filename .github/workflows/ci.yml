@@ -1,0 +1,191 @@
+# Build -> unit tests -> static checks (changed code only) -> AI review.
+# Only build + unit tests decide pass/fail. Static checks and AI review are advisory for now.
+
+name: CI + AI Review
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+  issue_comment:            # /review, /improve, /describe, /ask in a PR comment
+
+# Cancel the older run when new commits land on the same PR
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  build_and_test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    env:
+      BASE: origin/${{ github.base_ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0            # full history so checks can diff against the base branch
+
+      - name: Install tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang clang-tidy clang-format clang-tools iwyu > /dev/null
+          mkdir -p reports
+
+      # ---------- 1. Build (compiler warnings = first line of linting) ----------
+      - name: Build
+        run: |
+          set -o pipefail
+          cmake -S . -B build -DCMAKE_CXX_COMPILER=clang++ 2>&1 | tee reports/build.log
+          cmake --build build 2>&1 | tee -a reports/build.log
+
+      # ---------- 2. Unit tests (this decides pass/fail) ----------
+      - name: Unit tests
+        run: |
+          set -o pipefail
+          ctest --test-dir build --output-on-failure 2>&1 | tee reports/tests.log
+
+      # ---------- 3. Static checks on CHANGED code only (advisory) ----------
+      - name: Changed files
+        if: always()
+        run: |
+          bash tools/changed_files.sh "$BASE" > reports/changed_files.txt || true
+          echo "Changed C++ files:"; cat reports/changed_files.txt
+
+      - name: clang-format (changed lines)
+        if: always()
+        continue-on-error: true
+        run: |
+          git clang-format --diff "$BASE" -- '*.cpp' '*.cc' '*.h' '*.hpp' \
+            > reports/clang-format.log 2>&1 || true
+          if grep -q "^diff\|^@@" reports/clang-format.log; then
+            echo "Formatting changes needed on changed lines:"; cat reports/clang-format.log
+          else
+            echo "clang-format: changed lines are formatted correctly" | tee reports/clang-format.log
+          fi
+
+      - name: clang-tidy (changed lines)
+        if: always()
+        continue-on-error: true
+        run: |
+          TIDY_DIFF=$(find /usr -name 'clang-tidy-diff*.py' 2>/dev/null | head -1)
+          git diff -U0 "$BASE"...HEAD -- '*.cpp' '*.cc' '*.h' '*.hpp' \
+            | python3 "$TIDY_DIFF" -p1 -path build -quiet 2>&1 \
+            | tee reports/clang-tidy.log || true
+
+      - name: Clang Static Analyzer (changed files)
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 tools/analyze_changed.py build $(cat reports/changed_files.txt) 2>&1 \
+            | tee reports/static-analyzer.log || true
+
+      - name: Include-What-You-Use (changed files)
+        if: always()
+        continue-on-error: true
+        run: |
+          IWYU_TOOL=$(command -v iwyu_tool.py || command -v iwyu_tool || true)
+          if [ -n "$IWYU_TOOL" ] && [ -s reports/changed_files.txt ]; then
+            "$IWYU_TOOL" -p build $(cat reports/changed_files.txt) -- -Xiwyu --no_fwd_decls 2>&1 \
+              | tee reports/iwyu.log || true
+          else
+            echo "IWYU: nothing to check" | tee reports/iwyu.log
+          fi
+
+      # ---------- 4. Hand everything to the AI reviewer ----------
+      - name: Save CI output for the AI reviewer
+        if: always()
+        run: |
+          {
+            echo "===== BUILD WARNINGS ====="; grep -E "warning:|error:" reports/build.log | tail -n 60 || echo "none"
+            echo; echo "===== UNIT TESTS ====="; tail -n 120 reports/tests.log
+            echo; echo "===== CLANG-TIDY (changed lines) ====="; tail -n 150 reports/clang-tidy.log
+            echo; echo "===== CLANG STATIC ANALYZER (changed files) ====="; tail -n 150 reports/static-analyzer.log
+            echo; echo "===== INCLUDE-WHAT-YOU-USE (changed files) ====="; tail -n 60 reports/iwyu.log
+            echo; echo "===== CLANG-FORMAT ====="
+            if grep -q "^@@" reports/clang-format.log; then
+              echo "$(grep -c '^@@' reports/clang-format.log) changed hunk(s) need formatting (run git clang-format). Do not review formatting."
+            else
+              echo "ok"
+            fi
+          } > reports/ci_summary.txt 2>/dev/null || true
+          {
+            echo "## Static checks (changed code only)"
+            echo '```'; cat reports/ci_summary.txt; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-summary
+          path: reports/
+          retention-days: 3
+
+  ai_review:
+    needs: build_and_test
+    # Runs after build/tests even if they fail. Skips bots, drafts, plain pushes to an
+    # open PR (comment /review to re-run), and comments from people outside the repo.
+    if: >-
+      always() &&
+      github.event.sender.type != 'Bot' &&
+      (
+        (github.event_name == 'pull_request' &&
+         github.event.action != 'synchronize' &&
+         !github.event.pull_request.draft)
+        ||
+        (github.event_name == 'issue_comment' &&
+         github.event.issue.pull_request &&
+         startsWith(github.event.comment.body, '/') &&
+         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+      )
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      # Review guide comes from the default branch, not the PR
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: .github/ai-review
+          sparse-checkout-cone-mode: false
+
+      - name: Load review guide
+        run: |
+          {
+            echo "PR_REVIEWER__EXTRA_INSTRUCTIONS<<GUIDE_EOF"
+            cat .github/ai-review/REVIEW_GUIDE.md
+            echo "GUIDE_EOF"
+            echo "PR_CODE_SUGGESTIONS__EXTRA_INSTRUCTIONS<<GUIDE_EOF"
+            cat .github/ai-review/REVIEW_GUIDE.md
+            echo "GUIDE_EOF"
+          } >> "$GITHUB_ENV"
+
+      - name: Get CI output
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-summary
+          path: reports
+
+      - name: PR-Agent
+        # Pinned release, not @main
+        uses: docker://pragent/pr-agent:0.41.0-github_action
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GOOGLE_AI_STUDIO.GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # ANTHROPIC.KEY: ${{ secrets.ANTHROPIC_KEY }}   # approved company key only
+          github_action_config.auto_review: "true"
+          github_action_config.auto_describe: "true"
+          github_action_config.auto_improve: "true"
+          github_action_config.pr_actions: '["opened", "reopened", "ready_for_review"]'
+        with:
+          artifact_path: reports/ci_summary.txt
+          artifact_instructions: >-
+            Build warnings, unit-test results and static-analysis output (clang-tidy,
+            Clang Static Analyzer, include-what-you-use) for the changed code in this PR.
+            If the build or tests failed, point to the most likely cause in the changed code.
+            Use the tool warnings as evidence, explain real impact in plain terms, group
+            duplicates and skip false positives. Do not review formatting.

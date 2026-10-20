@@ -1,6 +1,6 @@
 # PR-Agent settings.
-# Demo runs on Gemini's free tier. To switch to Claude: comment out the Gemini
-# model lines, uncomment the Claude ones, and add an ANTHROPIC_KEY repo secret.
+# Demo runs on Gemini's free tier with SAMPLE CODE ONLY.
+# For company code use only the IT-approved Enterprise setup (e.g. Claude via the company account).
 
 [config]
 model = "gemini/gemini-3.8-flash"
@@ -11,15 +11,10 @@ model_weak = "gemini/gemini-3.8-flash"
 # model_weak = "anthropic/claude-haiku-5-5"   # cheaper model for /describe and /ask
 
 # Cost controls
-max_model_tokens = 32000        # cap prompt size per call
-# Context size of the model. Required when the pinned PR-Agent release does not
-# know the model name yet; the 32K cap above still limits what is sent.
-custom_model_max_tokens = 128000
-large_patch_policy = "clip"     # oversized diffs are clipped, not sent whole
-output_run_details = true       # show which model ran (useful while piloting)
-
-# The review guide (.github/ai-review/REVIEW_GUIDE.md) is added to the
-# instructions by the workflow.
+max_model_tokens = 32000          # cap prompt size per call
+custom_model_max_tokens = 128000  # model context size (needed when the pinned release doesn't know the model)
+large_patch_policy = "clip"       # oversized diffs are clipped, not sent whole
+output_run_details = true
 
 [pr_reviewer]
 num_max_findings = 6
@@ -28,12 +23,11 @@ require_security_review = true
 
 [pr_code_suggestions]
 num_code_suggestions_per_chunk = 4
-suggestions_score_threshold = 6   # hide low-value suggestions (0-10)
+suggestions_score_threshold = 6
 
 [pr_description]
 keep_original_user_title = true
 add_original_user_description = true
 
 [ignore]
-# Never sent to the model
-glob = ["demo_pr/**", "__pycache__/**", "*.lock", "*.png", "*.jpg", "*.bin"]
+glob = ["demo_pr/**", "python-demo/**", "work-rollout/**", "build/**", "third_party/**", "*.vcxproj", "*.vcxproj.filters", "*.sln", "*.bin", "*.hex"]

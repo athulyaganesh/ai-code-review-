@@ -1,0 +1,14 @@
+# Bug-finding checks first; legacy-style checks kept to a minimum to avoid noise.
+# Warnings never fail the build (yet).
+Checks: >
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  cppcoreguidelines-init-variables,
+  performance-*,
+  modernize-use-nullptr,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-macro-parentheses
+WarningsAsErrors: ''
+HeaderFilterRegex: '^.*/(include|src)/'
+FormatStyle: none
